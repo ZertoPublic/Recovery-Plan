@@ -16,7 +16,7 @@ Environment Requirements
 System Requirements 
   - ZVM IP
   - ZVM User / password 
-  - CSV Import file 
+  - ZertoRecoveryPlan.csv file completed
   - Log File directory
 
 # Running Script 
