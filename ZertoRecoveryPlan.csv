@@ -1,0 +1,4 @@
+VPGName,Action,CommitPolicy,CommitTime,ShutdownPolicy,RunScriptsinTest,PreFailoverScript,PostFailoverScriptDelay,PostFailoverScript,NextVPGFailoverDelay
+TestVPG1,TEST,none,0,forceshutdown,TRUE,.\samplescript1.ps1,20,.\samplescript2.ps1,40
+TestVPG2,FAILOVER,commit,300,None,FALSE,.\samplescript3.ps1,0,.\samplescript4.ps1,20
+TestVPG3,FAILOVER,rollback,300,shutdown,FALSE,.\samplescript5.ps1,60,.\samplescript6.ps1,0
