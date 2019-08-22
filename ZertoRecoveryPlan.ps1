@@ -13,11 +13,9 @@
    in the script filename.  If possible, note the changes required for that specific version.  
 .LEGAL
    Legal Disclaimer:
-
 ----------------------
 This script is an example script and is not supported under any Zerto support program or service.
 The author and Zerto further disclaim all implied warranties including, without limitation, any implied warranties of merchantability or of fitness for a particular purpose.
-
 In no event shall Zerto, its authors or anyone else involved in the creation, production or delivery of the scripts be liable for any damages whatsoever (including, without 
 limitation, damages for loss of business profits, business interruption, loss of business information, or other pecuniary loss) arising out of the use of or the inability 
 to use the sample scripts or documentation, even if the author or Zerto has been advised of the possibility of such damages.  The entire risk arising out of the use or 
@@ -35,8 +33,10 @@ performance of the sample scripts and documentation remains with you.
 $ZVMIPAddress = "ZVM IP Address Goes here"
 $ZVMPort = "9080"
 $ZVMAPIPort = "9669"
-$ZVMUser = "ZVM User goes here"
-$ZVMPassword = "ZVM Password Goes Here"
+$ZVMUser = "PS CMDlet User goes here"
+$ZVMPassword = "PS CMDlet Password Goes Here"
+$APIUser = "ZVM User goes here"
+$APIPassword = "ZVM Password Goes Here"
 #------------------------------------------------------------------------------#
 # 2. CSV Location - enter the name of the recovery plan location
 # The CSV columns are VPGName, Action (Failover,Test - if test used then the commit policy, commit time and shutdown setting do nothing) TimeBeforeNextVPGFailover (seconds), CommitPolicy (none,commit,rollback),CommitTime (seconds), ShutdownPolicy (None, shutdown, forceshutdown), PreFailoverScript (powershell in same directory), PostFailoverScript (same as pre but runs after the TimeBeforeNextVPGFailover period).
@@ -52,11 +52,9 @@ $logDirectory = "Log Directory Goes Here"
 #------------------------------------------------------------------------------#
 Write-Host -ForegroundColor Yellow "Informational line denoting start of script GOES HERE." 
 Write-Host -ForegroundColor Red "   Legal Disclaimer:
-
 ----------------------
 This script is an example script and is not supported under any Zerto support program or service.
 The author and Zerto further disclaim all implied warranties including, without limitation, any implied warranties of merchantability or of fitness for a particular purpose.
-
 In no event shall Zerto, its authors or anyone else involved in the creation, production or delivery of the scripts be liable for any damages whatsoever (including, without 
 limitation, damages for loss of business profits, business interruption, loss of business information, or other pecuniary loss) arising out of the use of or the inability 
 to use the sample scripts or documentation, even if the author or Zerto has been advised of the possibility of such damages.  The entire risk arising out of the use or 
@@ -87,7 +85,7 @@ LoadSnapin -PSSnapinName   "Zerto.PS.Commands"
 #------------------------------------------------------------------------------#
 $vpgListApiUrl = "https://" + $ZVMIPAddress + ":"+$ZVMAPIPort+"/v1/vpgs"
 $xZertoSessionURI = "https://" + $ZVMIPAddress + ":"+$ZVMAPIPort+"/v1/session/add"
-$authInfo = ("{0}:{1}" -f $ZVMUser,$ZVMPassword)
+$authInfo = ("{0}:{1}" -f $APIUser,$APIPassword)
 $authInfo = [System.Text.Encoding]::UTF8.GetBytes($authInfo)
 $authInfo = [System.Convert]::ToBase64String($authInfo)
 $headers = @{Authorization=("Basic {0}" -f $authInfo)}
@@ -182,7 +180,7 @@ $now = Get-Date
 #------------------------------------------------------------------------------#
 # Running a TEST as this is set as the Action in the CSV
 #------------------------------------------------------------------------------#
-failovertest-start -virtualprotectiongroup $currentvpgselected -checkpointdatetime $latesttimeobjectforTest -zvmip $ZVMIPAddress -zvmport $ZVMPort -username $ZVMUser -password $ZVMPassword -confirm:$false
+start-failovertest -virtualprotectiongroup $currentvpgselected -checkpointdatetime $latesttimeobjectforTest -zvmip $ZVMIPAddress -zvmport $ZVMPort -username $ZVMUser -password $ZVMPassword -confirm:$false
 #------------------------------------------------------------------------------#
 # Running POST failover TEST script if specified
 #------------------------------------------------------------------------------#
@@ -220,7 +218,7 @@ $currentNextVPGFailoverDelay = $vpg.NextVPGFailoverDelay
 # Logging time to sleep before starting TEST of next VPG
 #------------------------------------------------------------------------------#
 $now = Get-Date
-"$now - Waiting: $currentNextVPGFailoverDelay Seconds before starting TEST of next VPG" | out-file $logfile -append
+"$now - Waiting: $currentNextVPGFailoverDelay Seconds before starting action for next VPG" | out-file $logfile -append
 #------------------------------------------------------------------------------#
 # Applying currentNextVPGFailoverDelay value from CSV
 #------------------------------------------------------------------------------#
@@ -243,11 +241,11 @@ $now = Get-Date
 # Running a FAILOVER as this is set as the Action in the CSV
 # Getting the ID of the VPG then setting the variable using the API. Only needed for a Failover, not Test
 #------------------------------------------------------------------------------#
-$vpglistfromAPI = Invoke-RestMethod -Uri $vpgListApiUrl -TimeoutSec 100 -Headers $zertoSessionHeader
-foreach ($vpgsAPI in $vpglistfromAPI | where {$_.Name -eq $currentvpgselected})
+$vpglistfromAPI = Invoke-RestMethod -Uri $vpgListApiUrl -TimeoutSec 100 -Headers $zertoSessionHeader -Method GET
+foreach ($vpgsAPI in $vpglistfromAPI | where {$_.VpgName -eq $currentvpgselected})
 {
-$vpgid = $vpgsAPI.VpgIdentifier
-$vpgidselected = $vpgid | select Id -expandproperty Id
+$vpgidselected = $vpgsAPI.VpgIdentifier
+Write-Host $vpgid
 }
 #------------------------------------------------------------------------------#
 # Building URL for failover action
@@ -255,11 +253,17 @@ $vpgidselected = $vpgid | select Id -expandproperty Id
 $commitpolicyselected = $vpg.CommitPolicy
 $committimeselected = $vpg.CommitTime
 $Shutdownpolicyselected = $vpg.ShutdownPolicy
-$currentfailoverURL = "https://" + $ZVMIPAddress + ":" + $ZVMAPIPort + "/v1/vpgs/" + $vpgidselected + "/failover?checkpoint=" + $latesttimeobjectforFailover + "&commitPolicy=" + $commitpolicyselected + "&commitValue=" + $committimeselected + "&ShutdownPolicy=" + $Shutdownpolicyselected
+$requestbody = "{""CheckpointIdentifier"":" + $latesttimeobjectforFailover + ",""CommitPolicy"":""" + $commitpolicyselected + """,""ShutdownPolicy"":""" + $Shutdownpolicyselected + """,""TimeToWaitBeforeShutdownInSec"":" + $committimeselected
+if ($vpg.CommitPolicy -eq "commit")
+{
+$requestbody = $requestbody + ",""IsReverseProtection"":""true"""
+}
+$requestbody = $requestbody + "}"
+$currentfailoverURL = "https://" + $ZVMIPAddress + ":" + $ZVMAPIPort + "/v1/vpgs/" + $vpgidselected + "/failover"
 #------------------------------------------------------------------------------#
 # Running the Pre failover script if specified
 #------------------------------------------------------------------------------#
-if ($vpg.PreFailoverScript -ne "")
+if ($vpg.PreFailoverScript -ne "" -and $vpg.RunScriptsinTest -eq "TRUE") 
 {
 #------------------------------------------------------------------------------#
 # Logging Scripting Action
@@ -277,15 +281,15 @@ invoke-expression $currentPreFailoverScript
 #------------------------------------------------------------------------------#
 $now = Get-Date
 "$now - Performing FAILOVER for VPG: $currentvpgselected  to Checkpoint: $latesttimeobjectforFailover Using the below cmd:" | out-file $logfile -append
-"$now - invoke-webrequest -uri $currentfailoverURL -headers $zertoSessionHeader -method POST"  | out-file $logfile -append
+"$now - invoke-webrequest -uri $currentfailoverURL -headers $zertoSessionHeader -Body $requestbody -ContentType ""application/json"" -method POST"  | out-file $logfile -append
 #------------------------------------------------------------------------------#
 # Initiating failover for VPG
 #------------------------------------------------------------------------------#
-invoke-webrequest -uri $currentfailoverURL -headers $zertoSessionHeader -method POST
+invoke-webrequest -uri $currentfailoverURL -headers $zertoSessionHeader -Body $requestbody -ContentType "application/json" -method POST
 #------------------------------------------------------------------------------#
 # Running Post failover script if specified
 #------------------------------------------------------------------------------#
-if ($vpg.PostFailoverScript -ne "")
+if ($vpg.PostFailoverScript -ne "" -and $vpg.RunScriptsinTest -eq "TRUE")
 {
 #------------------------------------------------------------------------------#
 # Setting time to before running Post failover script
@@ -310,6 +314,7 @@ $now = Get-Date
 # Running POST failover script
 #------------------------------------------------------------------------------#
 invoke-expression $currentPostFailoverScript
+}
 #------------------------------------------------------------------------------#
 # Setting time to sleep before failing over next VPG
 #------------------------------------------------------------------------------#
@@ -318,12 +323,11 @@ $currentNextVPGFailoverDelay = $vpg.NextVPGFailoverDelay
 # Logging time to sleep before failing over next VPG
 #------------------------------------------------------------------------------#
 $now = Get-Date
-"$now - Waiting: $currentNextVPGFailoverDelay Seconds before FAILOVER over next VPG" | out-file $logfile -append
+"$now - Waiting: $currentNextVPGFailoverDelay Seconds before starting action for next VPG" | out-file $logfile -append
 #------------------------------------------------------------------------------#
 # Applying currentNextVPGFailoverDelay value from CSV
 #------------------------------------------------------------------------------#
 sleep $currentNextVPGFailoverDelay
-}
 #------------------------------------------------------------------------------#
 # End of the block for Failover Actions.
 #------------------------------------------------------------------------------#
@@ -355,7 +359,6 @@ $timedifferencebeforerounding = new-timespan -start $starttime -end $endtime | s
 $timedifference = "{0:N2}" -f $timedifferencebeforerounding
 "$endtime - Taken: $timedifference Seconds to Execute Actions for VPG: $currentvpgselected" | out-file $logfile -append
 "$endtime - Continuing to next VPG in CSV" | out-file $logfile -append
-"$endtime" | out-file $logfile -append
 } 
 #------------------------------------------------------------------------------#
 # End of script time taken
